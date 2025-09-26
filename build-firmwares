@@ -15,8 +15,7 @@ targets = [
     "grisp2",
     "bbb",
     "mangopi_mq_pro",
-    "osd32mp1",
-    "srhub",
+    "osd32mp1"
 ]
 
 org = System.fetch_env!("NH_ORG")
@@ -40,13 +39,13 @@ targets
     export MIX_TARGET=#{target}; \
     mix deps.get && \
     mix firmware
-    """)
+    """, into: IO.stream())
   IO.puts("#{target} built OK")
 
-  fw_path = "./_build/#{target}_dev/nerves/images/qa.fw"
+  fw_path = "./_build/#{target}_dev/nerves/images/systems_qa.fw"
 
   IO.puts("Signing #{fw_path}...")
-  {_output, 0} = System.shell("fwup --sign -s ./_build/sign.key -i \"#{fw_path}\" -o \"#{fw_path}\"")
+  {_output, 0} = System.shell("fwup --sign -s ./_build/sign.key -i \"#{fw_path}\" -o \"#{fw_path}\"", into: IO.stream())
   IO.puts("Signed")
 
   {uuid, 0} = System.shell("""
@@ -55,26 +54,48 @@ targets
 
   uuid = String.trim(uuid)
 
-  {_output, 0} =
+  {output, 0} =
   System.shell("""
   export MIX_TARGET=#{target}; \
-  nh firmware publish \
-    "#{fw_path}" \
-    --product #{product} \
-    --org #{org} \
+  nh deployment list\
+    --product "#{product}" \
+    --org "#{org}"
   """)
 
-  {_, _status} = System.shell("""
-  export MIX_TARGET=#{target}; \
-  nh deployment create \
-    --name "#{target} deploy" --tag deploy --firmware #{uuid} --version "" --org #{org}
-  """)
+  if not String.contains?(output, "#{target} deploy") do
+    {_output, 0} =
+    System.shell("""
+    export MIX_TARGET=#{target}; \
+    echo "y\n" | nh firmware publish \
+      "#{fw_path}" \
+      --product "#{product}" \
+      --org "#{org}"
+    """, into: IO.stream())
 
-  {0, _status} = System.shell("""
-  export MIX_TARGET=#{target}; \
-  nh deployment update \
-    --name "#{target} deploy" --firmware #{uuid} --org #{org}
-  """)
+    {_, _status} = System.shell("""
+    export MIX_TARGET=#{target}; \
+    nh deployment create \
+      --name "#{target} deploy" \
+      --tag deploy \
+      --version "" \
+      --firmware "#{uuid}" \
+      --org "#{org}" \
+      --product "#{product}"
+    """, into: IO.stream())
+  else
+    {_output, 0} =
+    System.shell("""
+    export MIX_TARGET=#{target}; \
+    echo "y\n" | nh firmware publish \
+      "#{fw_path}" \
+      --deploy "#{target} deploy" \
+      --product "#{product}" \
+      --org "#{org}"
+    """, into: IO.stream())
+  end
+
+
+  IO.puts("UUID: #{uuid}")
 
     File.rm("mix.exs")
 end)

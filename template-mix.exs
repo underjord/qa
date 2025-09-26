@@ -1,7 +1,7 @@
 defmodule QA.MixProject do
   use Mix.Project
 
-  @app :qa
+  @app :systems_qa
   @version "0.1.0"
   @all_targets [
     :rpi,
