@@ -1,0 +1,80 @@
+#!/usr/bin/env elixir
+
+ref =
+  case System.argv() do
+    [] -> "main"
+    [ref] -> ref
+  end
+
+targets = [
+    "rpi0",
+    "rpi",
+    "rpi2",
+    "rpi3",
+    "rpi3a",
+    "grisp2",
+    "bbb",
+    "mangopi_mq_pro",
+    "osd32mp1",
+    "srhub",
+]
+
+org = System.fetch_env!("NH_ORG")
+product = System.fetch_env!("NH_PRODUCT")
+
+File.rm_rf("_build")
+File.mkdir_p!("_build")
+signing_key = System.fetch_env!("SIGNING_KEY")
+File.write!("_build/sign.key", signing_key)
+
+targets
+|> Enum.map(fn target ->
+  IO.puts("Building #{target}...")
+  contents =
+    File.read!("template-mix.exs")
+    |> String.replace("# INSERT_SYSTEM_DEP_HERE", "{:nerves_system_#{target}, github: \"nerves-project/nerves_system_#{target}\", ref: \"#{ref}\", runtime: false, targets: :#{target}}")
+
+  File.write!("mix.exs", contents)
+
+  {_, 0} = System.shell("""
+    export MIX_TARGET=#{target}; \
+    mix deps.get && \
+    mix firmware
+    """)
+  IO.puts("#{target} built OK")
+
+  fw_path = "./_build/#{target}_dev/nerves/images/qa.fw"
+
+  IO.puts("Signing #{fw_path}...")
+  {_output, 0} = System.shell("fwup --sign -s ./_build/sign.key -i \"#{fw_path}\" -o \"#{fw_path}\"")
+  IO.puts("Signed")
+
+  {uuid, 0} = System.shell("""
+  fwup -i #{fw_path} -m --metadata-key meta-uuid
+  """)
+
+  uuid = String.trim(uuid)
+
+  {_output, 0} =
+  System.shell("""
+  export MIX_TARGET=#{target}; \
+  nh firmware publish \
+    "#{fw_path}" \
+    --product #{product} \
+    --org #{org} \
+  """)
+
+  {_, _status} = System.shell("""
+  export MIX_TARGET=#{target}; \
+  nh deployment create \
+    --name "#{target} deploy" --tag deploy --firmware #{uuid} --version "" --org #{org}
+  """)
+
+  {0, _status} = System.shell("""
+  export MIX_TARGET=#{target}; \
+  nh deployment update \
+    --name "#{target} deploy" --firmware #{uuid} --org #{org}
+  """)
+
+    File.rm("mix.exs")
+end)
